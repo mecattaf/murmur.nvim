@@ -20,7 +20,7 @@ jobs:
       - name: Update README with Snippet Permalink
         uses: Robitx/snippet-permalink-updater-action@main
         with:
-          snippet_file: 'lua/gp/config.lua'
+          snippet_file: 'lua/murmur/config.lua'
           start_marker: 'README_REFERENCE_MARKER_START'
           end_marker: 'README_REFERENCE_MARKER_END'
           markdown_file: 'README.md'
@@ -29,8 +29,8 @@ jobs:
       - name: panvimdoc
         uses: kdheepak/panvimdoc@main
         with:
-          vimdoc: gp.nvim
-          version: "Neovim"
+          vimdoc: murmur.nvim
+          version: "Neovim >= 0.9.0"
           demojify: true
           treesitter: true
           docmapping: true
@@ -40,7 +40,7 @@ jobs:
       - name: Push changes
         uses: stefanzweifel/git-auto-commit-action@v4
         with:
-          commit_message: "chore: update README and auto-generate vimdoc"
+          commit_message: "chore: update documentation"
           commit_user_name: "github-actions[bot]"
           commit_user_email: "github-actions[bot]@users.noreply.github.com"
           commit_author: "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"

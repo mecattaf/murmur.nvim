@@ -1,0 +1,49 @@
+murmur.nvim.txt             For Neovim            Last change: 2025 February 04
+
+==============================================================================
+Table of Contents                              *murmur.nvim-table-of-contents*
+
+1. Introduction                                       |murmur.nvim-introduction|
+2. Installation                                     |murmur.nvim-installation|
+3. Prerequisites                                   |murmur.nvim-prerequisites|
+4. Configuration                                   |murmur.nvim-configuration|
+5. Commands                                           |murmur.nvim-commands|
+6. Keybindings                                     |murmur.nvim-keybindings|
+7. Advanced Usage                                 |murmur.nvim-advanced-usage|
+
+==============================================================================
+1. Introduction                                       *murmur.nvim-introduction*
+
+murmur.nvim is a Neovim plugin that provides offline speech-to-text capabilities 
+using whisper.cpp. It allows users to dictate text directly into their editor 
+without relying on external APIs or services.
+
+Core Features:
+- Fully offline speech recognition using whisper.cpp
+- Low latency transcription
+- Multiple language support
+- Various text insertion modes
+- Recording status indicators
+
+==============================================================================
+2. Installation                                     *murmur.nvim-installation*
+
+First, ensure you have whisper.cpp installed and compiled:
+
+1. Clone and build whisper.cpp:
+>
+    git clone https://github.com/ggerganov/whisper.cpp
+    cd whisper.cpp
+    make
+<
+2. Download a model (e.g., base.en):
+>
+    bash ./models/download-ggml-model.sh base.en
+<
+
+Then install murmur.nvim using lazy.nvim:
+>
+    {
+        "mecattaf/murmur.nvim",
+        dependencies = {
+            "nvim-lua/plenary.nvim",  -- Required for async
