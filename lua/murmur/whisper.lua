@@ -164,23 +164,22 @@ local whisper = function(callback)
         )
 
         local curl_cmd = string.format(
-            'curl -X POST -H "Content-Type: multipart/form-data" '..
-            '-F "audio_file=@%s" %s',
-            rec_file,
+            'curl -X POST -H "Content-Type: audio/wav" --data-binary "@%s" %s',
+            session.rec_file,
             endpoint
         )
-
+    
         tasker.run(nil, "bash", { "-c", curl_cmd }, function(code, signal, stdout, _)
             if code ~= 0 then
                 vim.notify(string.format("Transcription failed: %d, %d", code, signal), vim.log.levels.ERROR)
                 return
             end
-
+    
             if not stdout or stdout == "" then
                 vim.notify("No response from server", vim.log.levels.ERROR)
                 return
             end
-
+    
             local success, decoded = pcall(vim.json.decode, stdout)
             if success and decoded and decoded.text then
                 callback(decoded.text)
