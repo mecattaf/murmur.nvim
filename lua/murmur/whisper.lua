@@ -17,6 +17,11 @@ local W = {
 
 ---@param opts table # user config
 W.setup = function(opts)
+    if opts.disable then
+        W.disabled = true
+        return
+    end
+
     -- Initialize default configuration
     W.config = {
         server = {
@@ -33,9 +38,8 @@ W.setup = function(opts)
         store_dir = (os.getenv("TMPDIR") or os.getenv("TEMP") or "/tmp") .. "/murmur"
     }
 
+    -- Prepare directory and register commands
     W.config.store_dir = helpers.prepare_dir(W.config.store_dir, "murmur store")
-
-    -- Register commands
     helpers.create_user_command("Murmur", W.cmd.Whisper)
     helpers.create_user_command("MurmurHealth", W.check_health)
 end
@@ -62,7 +66,7 @@ local function check_server()
     return false
 end
 
--- Core whisper function handling recording and transcription
+-- Core recording and transcription function
 local whisper = function(callback)
     -- Verify server availability
     if not check_server() then
@@ -70,17 +74,28 @@ local whisper = function(callback)
         return
     end
 
-    -- Recording configuration
-    local rec_file = W.config.store_dir .. "/rec.wav"
+    -- Initialize session state
+    local session = {
+        gid = helpers.create_augroup("MurmurRecord", { clear = true }),
+        timer = nil,
+        continue = false,
+        rec_file = W.config.store_dir .. "/rec.wav",
+        cleanup_in_progress = false
+    }
+
+    -- Recording configuration with proper audio format settings
     local rec_options = {
         sox = {
             cmd = "sox",
             opts = {
-                "-c", "1",
-                "--buffer", "32",
-                "-d",
-                rec_file,
-                "trim", "0", "3600"
+                "-c", "1",           -- Mono channel
+                "-r", "16000",       -- Force 16kHz sample rate
+                "--buffer", "32",    -- Buffer size
+                "-b", "16",          -- 16-bit depth
+                "-e", "signed-integer", -- PCM format
+                "-d",                -- Input from audio device
+                "rec.wav",           -- Output file (replaced at runtime)
+                "trim", "0", "3600"  -- Recording duration limit
             },
             exit_code = 0
         },
@@ -89,9 +104,9 @@ local whisper = function(callback)
             opts = {
                 "-c", "1",
                 "-f", "S16_LE",
-                "-r", "16000",
+                "-r", "16000",       -- Match required sample rate
                 "-d", "3600",
-                rec_file
+                "rec.wav"
             },
             exit_code = 1
         },
@@ -101,33 +116,33 @@ local whisper = function(callback)
                 "-y",
                 "-f", "avfoundation",
                 "-i", ":0",
+                "-ac", "1",
+                "-ar", "16000",      -- Match required sample rate
                 "-t", "3600",
-                rec_file
+                "rec.wav"
             },
             exit_code = 255
         }
     }
 
-    local gid = helpers.create_augroup("MurmurRecord", { clear = true })
-
-    -- Create popup interface
+    -- Create recording interface with proper state handling
     local buf, _, close_popup, _ = render.popup(
         nil,
         string.format("Murmur Recording [%s]", W.config.server.model),
         function(w, h)
             return 60, 12, (h - 12) * 0.4, (w - 60) * 0.5
         end,
-        { gid = gid, on_leave = false, escape = false, persist = false }
+        { gid = session.gid, on_leave = false, escape = false, persist = false }
     )
 
-    -- Initialize status display
+    -- Initialize status display with proper state checking
     local counter = 0
-    local timer = uv.new_timer()
-    timer:start(
+    session.timer = uv.new_timer()
+    session.timer:start(
         0,
         200,
         vim.schedule_wrap(function()
-            if vim.api.nvim_buf_is_valid(buf) then
+            if not session.cleanup_in_progress and vim.api.nvim_buf_is_valid(buf) then
                 vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
                     "    ",
                     "    Recording using NPU-accelerated model: " .. W.config.server.model,
@@ -138,23 +153,30 @@ local whisper = function(callback)
                     "    ",
                     "    Recordings stored in: " .. W.config.store_dir,
                 })
+                counter = counter + 1
             end
-            counter = counter + 1
         end)
     )
 
-    -- Set up cleanup handler using tasker
+    -- Safe cleanup handler using tasker
     local close = tasker.once(function()
-        if timer then
-            timer:stop()
-            timer:close()
+        if session.cleanup_in_progress then return end
+        session.cleanup_in_progress = true
+
+        if session.timer then
+            pcall(function()
+                session.timer:stop()
+                session.timer:close()
+            end)
+            session.timer = nil
         end
+
         close_popup()
-        vim.api.nvim_del_augroup_by_id(gid)
+        vim.api.nvim_del_augroup_by_id(session.gid)
         tasker.stop()
     end)
 
-    -- Transcription handler
+    -- Transcription handler with proper error handling
     local function transcribe()
         local endpoint = string.format(
             "http://%s:%d/transcribe/%s",
@@ -168,18 +190,18 @@ local whisper = function(callback)
             session.rec_file,
             endpoint
         )
-    
+
         tasker.run(nil, "bash", { "-c", curl_cmd }, function(code, signal, stdout, _)
             if code ~= 0 then
                 vim.notify(string.format("Transcription failed: %d, %d", code, signal), vim.log.levels.ERROR)
                 return
             end
-    
+
             if not stdout or stdout == "" then
                 vim.notify("No response from server", vim.log.levels.ERROR)
                 return
             end
-    
+
             local success, decoded = pcall(vim.json.decode, stdout)
             if success and decoded and decoded.text then
                 callback(decoded.text)
@@ -189,7 +211,7 @@ local whisper = function(callback)
         end)
     end
 
-    -- Set up interface controls
+    -- Set up interface controls with proper cleanup
     helpers.set_keymap({ buf }, { "n", "i", "v" }, "<esc>", function()
         tasker.stop()
     end)
@@ -198,22 +220,21 @@ local whisper = function(callback)
         tasker.stop()
     end)
 
-    local continue = false
     helpers.set_keymap({ buf }, { "n", "i", "v" }, "<cr>", function()
-        continue = true
+        session.continue = true
         vim.defer_fn(function()
             tasker.stop()
         end, 300)
     end)
 
     -- Set up cleanup handlers
-    helpers.autocmd({ "BufWipeout", "BufHidden", "BufDelete" }, { buf }, close, gid)
+    helpers.autocmd({ "BufWipeout", "BufHidden", "BufDelete" }, { buf }, close, session.gid)
 
-    -- Initialize recording command
+    -- Initialize recording command with proper defaults
     local cmd = {}
     local rec_cmd = W.config.recording.command or "sox"
 
-    -- Auto-detect recording command if not specified
+    -- Auto-detect recording command
     if not W.config.recording.command then
         if vim.fn.executable("ffmpeg") == 1 then
             local devices = vim.fn.system("ffmpeg -devices -v quiet | grep -i avfoundation | wc -l")
@@ -226,7 +247,7 @@ local whisper = function(callback)
         end
     end
 
-    -- Configure recording command
+    -- Configure recording command with proper error handling
     if type(rec_cmd) == "table" and rec_cmd[1] and rec_options[rec_cmd[1]] then
         rec_cmd = vim.deepcopy(rec_cmd)
         cmd.cmd = table.remove(rec_cmd, 1)
@@ -240,7 +261,14 @@ local whisper = function(callback)
         return
     end
 
-    -- Start recording process using tasker
+    -- Update recording file path
+    for i, v in ipairs(cmd.opts) do
+        if v == "rec.wav" then
+            cmd.opts[i] = session.rec_file
+        end
+    end
+
+    -- Start recording process with proper cleanup
     tasker.run(nil, cmd.cmd, cmd.opts, function(code, signal, stdout, stderr)
         close()
 
@@ -260,7 +288,7 @@ local whisper = function(callback)
             return
         end
 
-        if not continue then
+        if not session.continue then
             return
         end
 
@@ -275,7 +303,7 @@ W.Whisper = function(callback)
     whisper(callback)
 end
 
--- Command implementation
+-- Command implementation with proper range handling
 W.cmd.Whisper = function(params)
     local buf = vim.api.nvim_get_current_buf()
     local start_line = vim.api.nvim_win_get_cursor(0)[1]
@@ -294,7 +322,7 @@ W.cmd.Whisper = function(params)
     end)
 end
 
--- Health check implementation
+-- Health check implementation with complete dependency verification
 W.check_health = function()
     if W.disabled then
         vim.health.warn("murmur is disabled")
