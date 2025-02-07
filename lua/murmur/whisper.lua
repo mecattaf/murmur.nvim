@@ -144,14 +144,14 @@ local whisper = function(callback)
         vim.schedule_wrap(function()
             if not session.cleanup_in_progress and vim.api.nvim_buf_is_valid(buf) then
                 vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
-                    "    ",
-                    "    Recording using NPU-accelerated model: " .. W.config.server.model,
-                    "    Speak 🎤 " .. string.rep("📝", counter % 5),
-                    "    ",
-                    "    Press <Enter> to finish recording and start transcription",
-                    "    Cancel with <esc>/<C-c>",
-                    "    ",
-                    "    Recordings stored in: " .. W.config.store_dir,
+                    "   ",
+                    "   Recording using NPU-accelerated model: " .. W.config.server.model,
+                    "   Speak 🎤 " .. string.rep("📝", counter % 5),
+                    "   ",
+                    "   Press <Enter> to finish recording and start transcription",
+                    "   Cancel with <esc>/<C-c>",
+                    "   ",
+                    "   Recordings stored in: " .. W.config.store_dir,
                 })
                 counter = counter + 1
             end
