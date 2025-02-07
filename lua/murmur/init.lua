@@ -19,7 +19,7 @@ M.setup = function(opts)
     whisper.setup(opts)
     
     -- Notify setup completion
-    vim.notify("murmur.nvim initialized", vim.log.levels.INFO)
+    -- vim.notify("murmur.nvim initialized", vim.log.levels.INFO)
 end
 
 return M
