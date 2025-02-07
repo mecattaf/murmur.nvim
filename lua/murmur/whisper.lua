@@ -3,21 +3,20 @@
 -- This module handles audio recording and transcription using a local whisper.cpp server
 --------------------------------------------------------------------------------
 
--- Core dependencies for system interaction and UI
 local uv = vim.uv or vim.loop
 local render = require("murmur.render")
 local helpers = require("murmur.helper")
 
--- Module state management
+-- Module state container
 local W = {
-    config = {},        -- Configuration state
-    cmd = {},          -- Command implementations
-    disabled = false,  -- Module disabled state
-    server_status = nil,   -- Current server status
-    current_model = nil    -- Active whisper model
+    config = {},
+    cmd = {},
+    disabled = false,
+    server_status = nil,
+    current_model = nil
 }
 
--- Recording configuration templates for different audio backends
+-- Recording configurations for different audio backends
 local recording_configs = {
     sox = {
         cmd = "sox",
@@ -28,7 +27,7 @@ local recording_configs = {
             "-b", "16",          -- 16-bit depth
             "-e", "signed-integer", -- PCM format
             "-d", "rec.wav",     -- Output file (replaced at runtime)
-            "trim", "0", "3600"  -- Maximum duration
+            "trim", "0", "3600"  -- Recording duration limit
         },
         exit_code = 0
     },
@@ -58,10 +57,9 @@ local recording_configs = {
     }
 }
 
----Initialize the whisper module with user configuration
----@param opts table # User configuration options
+---@param opts table # user config
 W.setup = function(opts)
-    -- Initialize default configuration with user overrides
+    -- Initialize default configuration
     W.config = {
         server = {
             host = opts.server and opts.server.host or "127.0.0.1",
@@ -77,16 +75,16 @@ W.setup = function(opts)
         store_dir = (os.getenv("TMPDIR") or os.getenv("TEMP") or "/tmp") .. "/murmur"
     }
 
-    -- Prepare storage directory and initialize state
+    -- Prepare storage directory and set current model
     W.config.store_dir = helpers.prepare_dir(W.config.store_dir, "murmur store")
     W.current_model = W.config.server.model
 
-    -- Register command interfaces
+    -- Register commands
     helpers.create_user_command("Murmur", W.cmd.Whisper)
     helpers.create_user_command("MurmurHealth", W.check_health)
 end
 
--- Check NPU server availability and status
+-- Check server availability
 local function check_server()
     local health_url = string.format(
         "http://%s:%d/models",
@@ -108,12 +106,19 @@ local function check_server()
     return false
 end
 
--- Create a recording session manager
-local function create_recording_session(callback)
+-- Core recording and transcription function
+local function whisper(callback)
+    -- Verify server availability
+    if not check_server() then
+        vim.notify("NPU server not available", vim.log.levels.ERROR)
+        return
+    end
+
+    -- Prepare recording session
     local session = {
         gid = helpers.create_augroup("MurmurRecord", { clear = true }),
         timer = nil,
-        timer_active = false,
+        cleanup_in_progress = false,
         continue = false,
         rec_file = W.config.store_dir .. "/rec.wav"
     }
@@ -128,51 +133,27 @@ local function create_recording_session(callback)
         { gid = session.gid, on_leave = false, escape = false, persist = false }
     )
 
-    -- Safe cleanup function that handles all resources
+    -- Safe cleanup function
     local function cleanup()
-        if session.timer_active then
-            session.timer_active = false
-            if session.timer then
-                pcall(function()
-                    session.timer:stop()
-                    session.timer:close()
-                end)
-                session.timer = nil
-            end
-        end
-        close_popup()
-        vim.api.nvim_del_augroup_by_id(session.gid)
-    end
+        if session.cleanup_in_progress then return end
+        session.cleanup_in_progress = true
 
-    -- Initialize recording status display
-    local function init_status_display()
-        local counter = 0
-        session.timer = uv.new_timer()
-        session.timer_active = true
-
-        session.timer:start(
-            0,
-            200,
-            vim.schedule_wrap(function()
-                if vim.api.nvim_buf_is_valid(buf) then
-                    vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
-                        "    ",
-                        "    Recording using NPU-accelerated model: " .. W.current_model,
-                        "    Speak 🎤 " .. string.rep("📝", counter % 5),
-                        "    ",
-                        "    Press <Enter> to finish recording and start transcription",
-                        "    Cancel with <esc>/<C-c>",
-                        "    ",
-                        "    Recordings stored in: " .. W.config.store_dir,
-                    })
-                end
-                counter = counter + 1
+        -- Handle timer cleanup
+        if session.timer then
+            local timer = session.timer
+            session.timer = nil
+            pcall(function()
+                timer:stop()
+                timer:close()
             end)
-        )
+        end
+
+        close_popup()
+        pcall(vim.api.nvim_del_augroup_by_id, session.gid)
     end
 
-    -- Handle transcription after recording
-    local function handle_transcription()
+    -- Handle transcription
+    local function transcribe()
         local endpoint = string.format(
             "http://%s:%d/transcribe/%s",
             W.config.server.host,
@@ -195,25 +176,48 @@ local function create_recording_session(callback)
 
         local result = handle:read("*a")
         handle:close()
-        
+
         if result then
             local success, decoded = pcall(vim.json.decode, result)
             if success and decoded and decoded.text then
                 callback(decoded.text)
             else
-                vim.notify("Failed to decode server response: " .. result, vim.log.levels.ERROR)
+                vim.notify("Failed to decode server response", vim.log.levels.ERROR)
             end
         else
             vim.notify("No response from server", vim.log.levels.ERROR)
         end
     end
 
-    -- Initialize recording process
+    -- Initialize recording status display
+    local counter = 0
+    session.timer = uv.new_timer()
+    session.timer:start(
+        0,
+        200,
+        vim.schedule_wrap(function()
+            if not session.cleanup_in_progress and vim.api.nvim_buf_is_valid(buf) then
+                vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+                    "    ",
+                    "    Recording using NPU-accelerated model: " .. W.current_model,
+                    "    Speak 🎤 " .. string.rep("📝", counter % 5),
+                    "    ",
+                    "    Press <Enter> to finish recording and start transcription",
+                    "    Cancel with <esc>/<C-c>",
+                    "    ",
+                    "    Recordings stored in: " .. W.config.store_dir,
+                })
+                counter = counter + 1
+            end
+        end)
+    )
+
+    -- Handle recording process
     local function start_recording()
         local cmd = {}
         local rec_cmd = W.config.recording.command or "sox"
 
-        -- Auto-detect recording command if not specified
+        -- Auto-detect recording command
         if not W.config.recording.command then
             if vim.fn.executable("ffmpeg") == 1 then
                 local devices = vim.fn.system("ffmpeg -devices -v quiet | grep -i avfoundation | wc -l")
@@ -226,7 +230,7 @@ local function create_recording_session(callback)
             end
         end
 
-        -- Set up recording command configuration
+        -- Configure recording command
         if type(rec_cmd) == "table" and rec_cmd[1] and recording_configs[rec_cmd[1]] then
             rec_cmd = vim.deepcopy(rec_cmd)
             cmd.cmd = table.remove(rec_cmd, 1)
@@ -254,16 +258,18 @@ local function create_recording_session(callback)
                     return
                 end
 
-                if session.continue then
-                    vim.schedule(function() handle_transcription() end)
+                if session.continue and not session.cleanup_in_progress then
+                    vim.schedule(function()
+                        transcribe()
+                    end)
                 end
+                cleanup()
             end
         })
 
         if recording_process <= 0 then
             vim.notify("Failed to start recording process", vim.log.levels.ERROR)
             cleanup()
-            return
         end
     end
 
@@ -272,37 +278,22 @@ local function create_recording_session(callback)
     helpers.set_keymap({ buf }, { "n", "i", "v" }, "<C-c>", cleanup)
     helpers.set_keymap({ buf }, { "n", "i", "v" }, "<cr>", function()
         session.continue = true
-        vim.defer_fn(cleanup, 300)
+        vim.defer_fn(cleanup, 100)
     end)
 
     -- Set up cleanup handlers
     helpers.autocmd({ "BufWipeout", "BufHidden", "BufDelete" }, { buf }, cleanup, session.gid)
 
-    return {
-        start = function()
-            init_status_display()
-            start_recording()
-        end
-    }
+    -- Start recording
+    start_recording()
 end
 
--- Core whisper function that initiates recording and transcription
-local function whisper(callback)
-    if not check_server() then
-        vim.notify("NPU server not available", vim.log.levels.ERROR)
-        return
-    end
-
-    local session = create_recording_session(callback)
-    session.start()
-end
-
--- Public interface for whisper functionality
+-- Public interface
 W.Whisper = function(callback)
     whisper(callback)
 end
 
--- Command implementation for Neovim interface
+-- Command implementation
 W.cmd.Whisper = function(params)
     local buf = vim.api.nvim_get_current_buf()
     local start_line = vim.api.nvim_win_get_cursor(0)[1]
@@ -321,7 +312,7 @@ W.cmd.Whisper = function(params)
     end)
 end
 
--- Health check implementation for diagnostics
+-- Health check implementation
 W.check_health = function()
     if W.disabled then
         vim.health.warn("murmur is disabled")
