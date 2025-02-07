@@ -19,7 +19,7 @@ local W = {
 ---@param opts table # user config
 W.setup = function(opts)
     -- Notify setup initiation
-    vim.notify("Setting up murmur", vim.log.levels.INFO)
+    -- vim.notify("Setting up murmur", vim.log.levels.INFO)
 
     -- Default configuration focusing on NPU server
     W.config = {
@@ -45,7 +45,7 @@ W.setup = function(opts)
     helpers.create_user_command("Murmur", W.cmd.Whisper)
     helpers.create_user_command("MurmurHealth", W.check_health)
     
-    vim.notify("Murmur setup completed", vim.log.levels.INFO)
+    -- vim.notify("Murmur setup completed", vim.log.levels.INFO)
 end
 
 -- Check NPU server status and available models

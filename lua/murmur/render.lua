@@ -2,6 +2,7 @@
 -- UI rendering module for murmur.nvim
 --------------------------------------------------------------------------------
 
+local helpers = require("murmur.helper")
 local R = {}
 
 -- Create centered popup window
@@ -14,58 +15,99 @@ local R = {}
 R.popup = function(buf, title, size_func, opts, style)
     opts = opts or {}
     style = style or {}
+    local border = style.border or "single"
+    local zindex = style.zindex or 50
     
-    buf = buf or vim.api.nvim_create_buf(false, true)
+    -- Create buffer if not provided
+    buf = buf or vim.api.nvim_create_buf(false, not opts.persist)
     
+    -- Initial window setup with dummy values (will be resized immediately)
     local options = {
         relative = "editor",
+        width = 10,
+        height = 10,
+        row = 10,
+        col = 10,
         style = "minimal",
-        border = style.border or "single",
+        border = border,
         title = title,
         title_pos = "center",
-        zindex = 50
+        zindex = zindex
     }
     
+    -- Create the window
     local win = vim.api.nvim_open_win(buf, true, options)
     
+    -- Create resize function that properly positions the window
     local function resize()
-        local width = vim.api.nvim_get_option_value("columns", {})
-        local height = vim.api.nvim_get_option_value("lines", {})
+        local ew = vim.api.nvim_get_option_value("columns", {})
+        local eh = vim.api.nvim_get_option_value("lines", {})
         
-        local w, h, row, col = size_func(width, height)
+        local w, h, r, c = size_func(ew, eh)
         
         if w <= 0 or h <= 0 then
             vim.notify("Invalid window dimensions", vim.log.levels.ERROR)
             return
         end
         
+        -- Update window configuration with calculated dimensions
         vim.api.nvim_win_set_config(win, {
             relative = "editor",
             width = math.floor(w),
             height = math.floor(h),
-            row = math.floor(row),
-            col = math.floor(col)
+            row = math.floor(r),
+            col = math.floor(c)
         })
     end
     
-    resize()
+    -- Set up window management
+    local pgid = opts.gid or helpers.create_augroup("MurmurPopup", { clear = true })
     
+    -- Cleanup function
     local function close()
+        -- Remove autogroup if it was created internally
+        if not opts.gid then
+            vim.api.nvim_del_augroup_by_id(pgid)
+        end
+        -- Close window if valid
         if vim.api.nvim_win_is_valid(win) then
             vim.api.nvim_win_close(win, true)
         end
-        if opts.delete_buffer and vim.api.nvim_buf_is_valid(buf) then
+        -- Delete buffer if not persistent
+        if not opts.persist and vim.api.nvim_buf_is_valid(buf) then
             vim.api.nvim_buf_delete(buf, { force = true })
         end
     end
     
+    -- Set up auto-commands for window management
+    helpers.autocmd("VimResized", { buf }, resize, pgid)
+    helpers.autocmd({ "BufWipeout", "BufHidden", "BufDelete" }, { buf }, close, pgid)
+    
+    -- Handle buffer leave if specified
+    if opts.on_leave then
+        helpers.autocmd({ "BufEnter" }, nil, function(event)
+            if event.buf ~= buf then
+                close()
+                vim.schedule(function()
+                    vim.api.nvim_set_current_buf(event.buf)
+                end)
+            end
+        end, pgid)
+    end
+    
+    -- Set up escape handlers if specified
+    if opts.escape then
+        helpers.set_keymap({ buf }, "n", "<esc>", close)
+        helpers.set_keymap({ buf }, { "n", "v", "i" }, "<C-c>", close)
+    end
+    
+    -- Initial window positioning
+    resize()
+    
     return buf, win, close, resize
 end
 
--- Update popup content with status message
----@param buf number # buffer number
----@param lines table # lines to display
----@param highlight boolean # whether to highlight the text
+-- Rest of your existing functions remain the same
 R.update_popup = function(buf, lines, highlight)
     if not vim.api.nvim_buf_is_valid(buf) then
         return
@@ -78,9 +120,6 @@ R.update_popup = function(buf, lines, highlight)
     end
 end
 
--- Show error message in popup
----@param buf number # buffer number
----@param message string # error message
 R.show_error = function(buf, message)
     if not vim.api.nvim_buf_is_valid(buf) then
         return
@@ -98,7 +137,6 @@ R.show_error = function(buf, message)
     vim.api.nvim_buf_add_highlight(buf, -1, "MurmurError", 2, 0, -1)
 end
 
--- Set up highlights
 R.setup_highlights = function()
     vim.api.nvim_set_hl(0, "MurmurStatus", { link = "Normal" })
     vim.api.nvim_set_hl(0, "MurmurError", { link = "ErrorMsg" })
@@ -106,4 +144,3 @@ R.setup_highlights = function()
 end
 
 return R
-
