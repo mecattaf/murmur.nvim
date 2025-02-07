@@ -2,8 +2,6 @@
 -- UI rendering module for murmur.nvim
 --------------------------------------------------------------------------------
 
-local logger = require("murmur.logger")
-
 local R = {}
 
 -- Create centered popup window
@@ -17,10 +15,8 @@ R.popup = function(buf, title, size_func, opts, style)
     opts = opts or {}
     style = style or {}
     
-    -- Create or use provided buffer
     buf = buf or vim.api.nvim_create_buf(false, true)
     
-    -- Set up window options
     local options = {
         relative = "editor",
         style = "minimal",
@@ -30,23 +26,19 @@ R.popup = function(buf, title, size_func, opts, style)
         zindex = 50
     }
     
-    -- Create window
     local win = vim.api.nvim_open_win(buf, true, options)
     
-    -- Resize function
     local function resize()
         local width = vim.api.nvim_get_option_value("columns", {})
         local height = vim.api.nvim_get_option_value("lines", {})
         
         local w, h, row, col = size_func(width, height)
         
-        -- Validate dimensions
         if w <= 0 or h <= 0 then
-            logger.error("Invalid window dimensions")
+            vim.notify("Invalid window dimensions", vim.log.levels.ERROR)
             return
         end
         
-        -- Update window config
         vim.api.nvim_win_set_config(win, {
             relative = "editor",
             width = math.floor(w),
@@ -56,10 +48,8 @@ R.popup = function(buf, title, size_func, opts, style)
         })
     end
     
-    -- Initial resize
     resize()
     
-    -- Close function
     local function close()
         if vim.api.nvim_win_is_valid(win) then
             vim.api.nvim_win_close(win, true)

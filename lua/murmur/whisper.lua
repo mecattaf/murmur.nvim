@@ -2,12 +2,12 @@
 -- Whisper module for transcribing speech using NPU-accelerated whisper.cpp server
 --------------------------------------------------------------------------------
 
+-- Core dependencies
 local uv = vim.uv or vim.loop
-
-local logger = require("murmur.logger")
 local render = require("murmur.render")
 local helpers = require("murmur.helper")
 
+-- Module state
 local W = {
     config = {},
     cmd = {},
@@ -18,7 +18,8 @@ local W = {
 
 ---@param opts table # user config
 W.setup = function(opts)
-    logger.debug("murmur setup started\n" .. vim.inspect(opts))
+    -- Notify setup initiation
+    vim.notify("Setting up murmur", vim.log.levels.INFO)
 
     -- Default configuration focusing on NPU server
     W.config = {
@@ -36,6 +37,7 @@ W.setup = function(opts)
         store_dir = (os.getenv("TMPDIR") or os.getenv("TEMP") or "/tmp") .. "/murmur"
     }
 
+    -- Prepare storage directory and set current model
     W.config.store_dir = helpers.prepare_dir(W.config.store_dir, "murmur store")
     W.current_model = W.config.server.model
 
@@ -43,7 +45,7 @@ W.setup = function(opts)
     helpers.create_user_command("Murmur", W.cmd.Whisper)
     helpers.create_user_command("MurmurHealth", W.check_health)
     
-    logger.debug("murmur setup finished")
+    vim.notify("Murmur setup completed", vim.log.levels.INFO)
 end
 
 -- Check NPU server status and available models
@@ -76,7 +78,7 @@ end
 local function whisper(callback)
     -- Verify server is available
     if not check_server() then
-        logger.error("NPU server not available")
+        vim.notify("NPU server not available", vim.log.levels.ERROR)
         return
     end
 
@@ -122,9 +124,10 @@ local function whisper(callback)
         }
     }
 
+    -- Create recording session group
     local gid = helpers.create_augroup("MurmurRecord", { clear = true })
 
-    -- Create recording popup with model indication
+    -- Set up recording interface
     local buf, _, close_popup, _ = render.popup(
         nil,
         string.format("Murmur Recording [%s]", W.current_model),
@@ -134,7 +137,7 @@ local function whisper(callback)
         { gid = gid, on_leave = false, escape = false, persist = false }
     )
 
-    -- Transcription function using NPU server
+    -- Transcription handler
     local function transcribe(audio_file)
         local endpoint = string.format(
             "http://%s:%d/transcribe/%s",
@@ -152,7 +155,7 @@ local function whisper(callback)
 
         local handle = io.popen(curl_cmd)
         if not handle then
-            logger.error("Failed to execute transcription request")
+            vim.notify("Failed to execute transcription request", vim.log.levels.ERROR)
             return
         end
 
@@ -164,14 +167,14 @@ local function whisper(callback)
             if success and decoded and decoded.text then
                 callback(decoded.text)
             else
-                logger.error("Failed to decode NPU server response: " .. result)
+                vim.notify("Failed to decode NPU server response: " .. result, vim.log.levels.ERROR)
             end
         else
-            logger.error("No response from NPU server")
+            vim.notify("No response from NPU server", vim.log.levels.ERROR)
         end
     end
 
-    -- Animation frames for recording status
+    -- Setup recording status animation
     local counter = 0
     local timer = uv.new_timer()
     timer:start(
@@ -194,7 +197,8 @@ local function whisper(callback)
         end)
     )
 
-    local close = function()
+    -- Cleanup function
+    local function close()
         if timer then
             timer:stop()
             timer:close()
@@ -203,7 +207,7 @@ local function whisper(callback)
         vim.api.nvim_del_augroup_by_id(gid)
     end
 
-    -- Handle recording controls
+    -- Set up control keymaps
     helpers.set_keymap({ buf }, { "n", "i", "v" }, "<esc>", close)
     helpers.set_keymap({ buf }, { "n", "i", "v" }, "<C-c>", close)
 
@@ -213,14 +217,15 @@ local function whisper(callback)
         vim.defer_fn(close, 300)
     end)
 
-    -- Cleanup on buffer exit
+    -- Set up cleanup autocmds
     helpers.autocmd({ "BufWipeout", "BufHidden", "BufDelete" }, { buf }, close, gid)
 
-    -- Handle recording process
+    -- Recording process handler
     local function start_recording()
         local cmd = {}
         local rec_cmd = W.config.recording.command
 
+        -- Auto-detect recording command if not specified
         if not rec_cmd then
             rec_cmd = "sox"
             if vim.fn.executable("ffmpeg") == 1 then
@@ -235,6 +240,7 @@ local function whisper(callback)
             end
         end
 
+        -- Set up recording command
         if type(rec_cmd) == "table" and rec_cmd[1] and rec_options[rec_cmd[1]] then
             rec_cmd = vim.deepcopy(rec_cmd)
             cmd.cmd = table.remove(rec_cmd, 1)
@@ -243,23 +249,23 @@ local function whisper(callback)
         elseif type(rec_cmd) == "string" and rec_options[rec_cmd] then
             cmd = rec_options[rec_cmd]
         else
-            logger.error(string.format("Invalid recording command: %s", rec_cmd))
+            vim.notify(string.format("Invalid recording command: %s", rec_cmd), vim.log.levels.ERROR)
             close()
             return
         end
 
-        -- Update recording file path
+        -- Update recording file path in command options
         for i, v in ipairs(cmd.opts) do
             if v == "rec.wav" then
                 cmd.opts[i] = rec_file
             end
         end
 
-        -- Execute recording command
+        -- Start recording process
         local recording_process = vim.fn.jobstart(cmd.cmd .. " " .. table.concat(cmd.opts, " "), {
             on_exit = function(_, code)
                 if code ~= cmd.exit_code then
-                    logger.error("Recording failed with code: " .. code)
+                    vim.notify("Recording failed with code: " .. code, vim.log.levels.ERROR)
                     close()
                     return
                 end
@@ -273,12 +279,12 @@ local function whisper(callback)
         })
 
         if recording_process <= 0 then
-            logger.error("Failed to start recording process")
+            vim.notify("Failed to start recording process", vim.log.levels.ERROR)
             close()
         end
     end
 
-    -- Start recording process
+    -- Begin recording
     start_recording()
 end
 

@@ -4,7 +4,6 @@
 
 local config = require("murmur.config")
 local whisper = require("murmur.whisper")
-local logger = require("murmur.logger")
 local render = require("murmur.render")
 
 local M = {}
@@ -16,13 +15,11 @@ M.setup = function(opts)
     opts = vim.tbl_deep_extend("force", config, opts or {})
     
     -- Initialize components
-    logger.setup(opts)
     render.setup_highlights()
     whisper.setup(opts)
     
-    -- Log setup completion
-    logger.info("murmur.nvim initialized")
+    -- Notify setup completion
+    vim.notify("murmur.nvim initialized", vim.log.levels.INFO)
 end
 
--- Export the module
 return M

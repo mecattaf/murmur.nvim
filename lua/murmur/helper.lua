@@ -2,7 +2,6 @@
 -- Helper functions for murmur.nvim
 --------------------------------------------------------------------------------
 
-local logger = require("murmur.logger")
 local H = {}
 
 -- Directory preparation with proper permissions
@@ -14,12 +13,11 @@ H.prepare_dir = function(dir, name)
     name = name and name .. " " or ""
     
     if vim.fn.isdirectory(dir) == 0 then
-        logger.debug("creating " .. name .. "directory: " .. dir)
+        vim.notify("Creating " .. name .. "directory: " .. dir, vim.log.levels.INFO)
         vim.fn.mkdir(dir, "p")
     end
 
     dir = vim.fn.resolve(dir)
-    logger.debug("resolved " .. name .. "directory: " .. dir)
     return dir
 end
 
